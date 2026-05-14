@@ -2,6 +2,8 @@
 
 A single-page Kanban board, wiki, and schedule that runs entirely in the browser.
 
+<img width="1513" height="327" alt="screenshot" src="https://github.com/user-attachments/assets/96af8994-e604-40c6-be65-46a25b921927" />
+
 ---
 
 ## Why?
@@ -17,8 +19,6 @@ I wanted an offline task tracker with other features like a wiki and a Gantt Cha
 3. You'll see a seeded board ("My Work") with a few example cards and a Quick Start wiki page.
 4. Click **Export** before closing the tab to save a JSON backup.
 5. Click **Import** and select that JSON file to pick up where you left off.
-
-There is also a self-contained build at [offline-kanban.html](offline-kanban.html), it bundles everything.
 
 > **Heads up:** all data lives in your browser's `localStorage`. Clearing site data, switching browsers, or using a private window will wipe the board. **Export daily.**.
 
