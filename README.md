@@ -1,3 +1,5 @@
+[![License: The Unlicense](https://img.shields.io/badge/License-The_Unlicense-green.svg)](LICENSE)
+
 # Offline Kanban
 
 A single-page Kanban board, wiki, and schedule that runs entirely in the browser.
@@ -20,7 +22,7 @@ I wanted an offline task tracker with other features like a wiki and a Gantt Cha
 4. Click **Export** before closing the tab to save a JSON backup.
 5. Click **Import** and select that JSON file to pick up where you left off.
 
-> **Heads up:** all data lives in your browser's `localStorage`. Clearing site data, switching browsers, or using a private window will wipe the board. **Export daily.**.
+> **Heads up:** all data lives in your browser's `localStorage`. Clearing site data, switching browsers, or using a private window will wipe the board. **Export daily.**
 
 ---
 
@@ -132,7 +134,7 @@ Because the format is plain JSON, exports can be diffed in git, hand-edited, or 
 - **No sync.** The export file *is* the sync mechanism.
 - **Storage quota.** Browsers typically give `localStorage` ~5 MB per origin. Large images pasted into wiki pages will blow that out.
 - **No undo history.** Deletes prompt for confirmation; once gone, they're gone (until you re-import a backup).
-- **Single-user.** There's no concept of accounts or permissions..
+- **Single-user.** There's no concept of accounts or permissions.
 
 ---
 
