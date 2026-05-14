@@ -8,6 +8,14 @@ A single-page Kanban board, wiki, and schedule that runs entirely in the browser
 
 ---
 
+## Live demo
+
+**[adlra.github.io/offline-kanban](https://adlra.github.io/offline-kanban/)**
+
+The demo is the real app. Anything you do there is saved to your own browser's `localStorage`. Use **Export** to create a JSON backup.
+
+---
+
 ## Why?
 
 I wanted an offline task tracker with other features like a wiki and a Gantt Chart.
@@ -22,7 +30,7 @@ I wanted an offline task tracker with other features like a wiki and a Gantt Cha
 4. Click **Export** before closing the tab to save a JSON backup.
 5. Click **Import** and select that JSON file to pick up where you left off.
 
-> **Heads up:** all data lives in your browser's `localStorage`. Clearing site data, switching browsers, or using a private window will wipe the board. **Export daily.**
+> **Warning:** all data lives in your browser's `localStorage`. Clearing site data, switching browsers, or using a private window will wipe the board. **Export daily.**.
 
 ---
 
@@ -36,7 +44,7 @@ I wanted an offline task tracker with other features like a wiki and a Gantt Cha
 - Mark one or more columns as "Done" so completed work is styled accordingly.
 
 ### Wiki view
-- Nested page tree — any page can have children.
+- Nested page tree (any page can have children).
 - Markdown editor with **Edit / Split / Preview** modes.
 - Tag pages and filter the tree by tag.
 - Cross-link between pages with `[[Page Name]]` syntax.
@@ -59,7 +67,7 @@ A running, local log of changes.
 - Optional pre-close warning if you haven't exported today.
 
 ### Themes
-Three visual themes — **Crisp**, **Notebook**, **Terminal** — each with a light and dark variant. Toggle from the *Tweaks* panel or with the moon icon in the top bar.
+Three visual themes (**Crisp**, **Notebook**, **Terminal**), each with a light and dark variant. Toggle from the *Tweaks* panel or with the moon icon in the top bar.
 
 ---
 
