@@ -127,6 +127,7 @@ function load() {
   state.activity = state.activity || [];
   state.tags = state.tags || [];
   state.people = state.people || [];
+  ensureColumnOrders();
 }
 
 let saveTimer = null;
@@ -139,13 +140,58 @@ function save() {
     } catch (e) {
       toast("Couldn't auto-save — storage may be full.", "warn");
     }
+    renderStorageMeter();
   }, 200);
 }
 function saveSettings() {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
 
-// ---------- Activity logging ----------
+// ---------- Storage usage ----------
+// Most browsers cap localStorage at ~5MB per origin. We probe at first use to refine.
+let STORAGE_QUOTA_BYTES = 5 * 1024 * 1024;
+function fmtBytes(b) {
+  if (b < 1024) return b + " B";
+  if (b < 1024*1024) return (b/1024).toFixed(b < 10*1024 ? 1 : 0) + " KB";
+  return (b/1024/1024).toFixed(b < 10*1024*1024 ? 2 : 1) + " MB";
+}
+function measureStorageUsage() {
+  let bytes = 0;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      const v = localStorage.getItem(k) || "";
+      // UTF-16 storage — count by char × 2 for an upper-bound estimate
+      bytes += (k.length + v.length) * 2;
+    }
+  } catch (e) {}
+  return bytes;
+}
+async function probeStorageQuota() {
+  // Try the StorageManager API first (gives total origin quota, not just LS — still informative)
+  if (navigator.storage && navigator.storage.estimate) {
+    try {
+      const est = await navigator.storage.estimate();
+      if (est && est.quota) {
+        // Don't use the full origin quota — localStorage cap is much smaller (~5-10 MB).
+        // Use 5 MB as the conservative LS bound regardless; only widen if estimate suggests otherwise.
+      }
+    } catch (e) {}
+  }
+}
+function renderStorageMeter() {
+  const meter = document.getElementById("storage-meter");
+  const fill = document.getElementById("storage-fill");
+  const label = document.getElementById("storage-label");
+  if (!meter || !fill || !label) return;
+  const used = measureStorageUsage();
+  const pct = Math.min(100, (used / STORAGE_QUOTA_BYTES) * 100);
+  fill.style.width = pct.toFixed(1) + "%";
+  label.textContent = `${pct.toFixed(pct < 10 ? 1 : 0)}% · ${fmtBytes(used)}`;
+  meter.title = `localStorage: ${fmtBytes(used)} / ~${fmtBytes(STORAGE_QUOTA_BYTES)} (${pct.toFixed(1)}% used)`;
+  meter.classList.toggle("warn", pct >= 60 && pct < 85);
+  meter.classList.toggle("crit", pct >= 85);
+}
 function logActivity(text) {
   state.activity.unshift({ id: uid("a"), at: now(), text });
   if (state.activity.length > 500) state.activity.length = 500;
@@ -161,17 +207,45 @@ function applyTheme() {
 // ---------- Helpers ----------
 function activeBoard() { return state.boards.find(b => b.id === state.activeBoardId); }
 function getColumn(id) { return state.columns[id]; }
+
+// Ensure each column has a cardIds array (migration for older data + invariant maintenance)
+function ensureColumnOrders() {
+  // First, build sets per column from card.columnId truth
+  const cardsByCol = {};
+  Object.values(state.cards).forEach(c => {
+    if (!c) return;
+    if (!cardsByCol[c.columnId]) cardsByCol[c.columnId] = [];
+    cardsByCol[c.columnId].push(c);
+  });
+  Object.values(state.columns).forEach(col => {
+    if (!col.cardIds) col.cardIds = [];
+    // Drop any stale ids (cards moved away / deleted)
+    col.cardIds = col.cardIds.filter(id => state.cards[id] && state.cards[id].columnId === col.id);
+    // Append any cards belonging here that aren't already in the list, sorted by created
+    const known = new Set(col.cardIds);
+    const missing = (cardsByCol[col.id] || []).filter(c => !known.has(c.id))
+      .sort((a, b) => new Date(a.created) - new Date(b.created));
+    missing.forEach(c => col.cardIds.push(c.id));
+  });
+}
+
 function cardsInColumn(colId, opts = {}) {
   const board = activeBoard();
   const filter = board.filter || {};
   const showArchived = !!opts.showArchived;
-  return Object.values(state.cards).filter(c => {
-    if (c.columnId !== colId) return false;
-    if (!showArchived && c.archived) return false;
-    if (filter.assignee && c.assigneeId !== filter.assignee) return false;
-    if (filter.tag && !(c.tags || []).includes(filter.tag)) return false;
-    return true;
-  });
+  const col = state.columns[colId];
+  if (!col) return [];
+  if (!col.cardIds) col.cardIds = [];
+  return col.cardIds
+    .map(id => state.cards[id])
+    .filter(c => {
+      if (!c) return false;
+      if (c.columnId !== colId) return false;
+      if (!showArchived && c.archived) return false;
+      if (filter.assignee && c.assigneeId !== filter.assignee) return false;
+      if (filter.tag && !(c.tags || []).includes(filter.tag)) return false;
+      return true;
+    });
 }
 function personOf(id) { return state.people.find(p => p.id === id); }
 function initials(name) {
@@ -337,6 +411,46 @@ function renderBoard() {
     const col = state.columns[cid]; if (!col) return;
     canvas.appendChild(renderColumn(col, board));
   });
+  // ---------- Column drop handling on the canvas ----------
+  function clearColDropIndicators() {
+    canvas.querySelectorAll(".column.col-drop-left, .column.col-drop-right").forEach(c => {
+      c.classList.remove("col-drop-left", "col-drop-right");
+    });
+  }
+  function findColDropTarget(clientX) {
+    const cols = [...canvas.querySelectorAll(".column:not(.col-dragging)")];
+    for (const colEl of cols) {
+      const r = colEl.getBoundingClientRect();
+      const mid = r.left + r.width / 2;
+      if (clientX < mid) return { before: colEl };
+    }
+    return { before: null };
+  }
+  canvas.addEventListener("dragover", e => {
+    if (!e.dataTransfer.types.includes("text/columnid")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    clearColDropIndicators();
+    const tgt = findColDropTarget(e.clientX);
+    if (tgt.before) tgt.before.classList.add("col-drop-left");
+    else {
+      const last = canvas.querySelector(".column:not(.col-dragging):last-of-type");
+      if (last) last.classList.add("col-drop-right");
+    }
+  });
+  canvas.addEventListener("dragleave", (e) => {
+    if (!canvas.contains(e.relatedTarget)) clearColDropIndicators();
+  });
+  canvas.addEventListener("drop", e => {
+    if (!e.dataTransfer.types.includes("text/columnid")) return;
+    e.preventDefault();
+    clearColDropIndicators();
+    const colId = e.dataTransfer.getData("text/columnid");
+    if (!colId) return;
+    const tgt = findColDropTarget(e.clientX);
+    moveColumn(colId, tgt.before ? tgt.before.dataset.colId : null);
+  });
+
   // Add column placeholder
   const addCol = document.createElement("div");
   addCol.className = "add-column";
@@ -359,10 +473,12 @@ function renderColumn(col, board) {
   const wrap = document.createElement("div");
   wrap.className = "column";
   wrap.dataset.colId = col.id;
+  wrap.draggable = false; // we toggle this from the head drag handle
 
   const head = document.createElement("div");
   head.className = "column-head";
   head.innerHTML = `
+    <span class="col-drag-handle" title="Drag to reorder column">${svgIcon("grip", 12)}</span>
     <span class="dot" style="background:${col.color}"></span>
     <span class="title" contenteditable="true" spellcheck="false">${esc(col.name)}</span>
     <span class="count">${cards.length}</span>
@@ -393,15 +509,50 @@ function renderColumn(col, board) {
   cards.forEach(c => body.appendChild(renderCard(c)));
   wrap.appendChild(body);
 
-  // DnD
-  body.addEventListener("dragover", e => { e.preventDefault(); wrap.classList.add("drag-over"); });
-  body.addEventListener("dragleave", () => wrap.classList.remove("drag-over"));
+  // ---------- Card DnD: reorder + cross-column move ----------
+  function clearCardDropIndicators() {
+    wrap.querySelectorAll(".card.drop-above, .card.drop-below").forEach(c => {
+      c.classList.remove("drop-above", "drop-below");
+    });
+  }
+  function findDropTarget(clientY) {
+    const visibleCards = [...body.querySelectorAll(".card:not(.dragging)")];
+    for (const card of visibleCards) {
+      const r = card.getBoundingClientRect();
+      const mid = r.top + r.height / 2;
+      if (clientY < mid) return { before: card };
+    }
+    return { before: null }; // drop at end
+  }
+  body.addEventListener("dragover", e => {
+    if (!e.dataTransfer.types.includes("text/cardid") && !e.dataTransfer.types.includes("text/columnid")) return;
+    if (e.dataTransfer.types.includes("text/columnid")) return; // handled at canvas
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    wrap.classList.add("drag-over");
+    clearCardDropIndicators();
+    const tgt = findDropTarget(e.clientY);
+    if (tgt.before) tgt.before.classList.add("drop-above");
+    else {
+      const last = body.querySelector(".card:not(.dragging):last-of-type");
+      if (last) last.classList.add("drop-below");
+    }
+  });
+  body.addEventListener("dragleave", (e) => {
+    // Only clear when leaving the column entirely
+    if (!body.contains(e.relatedTarget)) {
+      wrap.classList.remove("drag-over");
+      clearCardDropIndicators();
+    }
+  });
   body.addEventListener("drop", e => {
     e.preventDefault();
     wrap.classList.remove("drag-over");
+    clearCardDropIndicators();
     const cardId = e.dataTransfer.getData("text/cardid");
     if (!cardId) return;
-    moveCardToColumn(cardId, col.id);
+    const tgt = findDropTarget(e.clientY);
+    moveCard(cardId, col.id, tgt.before ? tgt.before.dataset.cardId : null);
   });
 
   const foot = document.createElement("div");
@@ -412,6 +563,22 @@ function renderColumn(col, board) {
   addBtn.addEventListener("click", () => addCard(col.id));
   foot.appendChild(addBtn);
   wrap.appendChild(foot);
+
+  // ---------- Column DnD via the grip handle ----------
+  const grip = head.querySelector(".col-drag-handle");
+  grip.addEventListener("mousedown", () => { wrap.draggable = true; });
+  // Reset draggable after mouseup so card drags from inside don't accidentally become column drags
+  document.addEventListener("mouseup", () => { wrap.draggable = false; }, { once: true });
+  wrap.addEventListener("dragstart", e => {
+    if (!wrap.draggable) return;
+    e.dataTransfer.setData("text/columnid", col.id);
+    e.dataTransfer.effectAllowed = "move";
+    wrap.classList.add("col-dragging");
+  });
+  wrap.addEventListener("dragend", () => {
+    wrap.classList.remove("col-dragging");
+    wrap.draggable = false;
+  });
 
   return wrap;
 }
@@ -478,15 +645,53 @@ function renderCard(c) {
   return el;
 }
 
-function moveCardToColumn(cardId, newColId) {
+function moveCard(cardId, newColId, beforeCardId) {
   const c = state.cards[cardId];
-  if (!c || c.columnId === newColId) return;
-  const from = state.columns[c.columnId]?.name || "?";
-  const to = state.columns[newColId]?.name || "?";
+  if (!c) return;
+  const fromCol = state.columns[c.columnId];
+  const toCol = state.columns[newColId];
+  if (!fromCol || !toCol) return;
+
+  // Detach from old
+  fromCol.cardIds = (fromCol.cardIds || []).filter(id => id !== cardId);
+  // Insert into new
+  toCol.cardIds = toCol.cardIds || [];
+  // Make sure we don't double-insert
+  toCol.cardIds = toCol.cardIds.filter(id => id !== cardId);
+  if (beforeCardId) {
+    const idx = toCol.cardIds.indexOf(beforeCardId);
+    if (idx >= 0) toCol.cardIds.splice(idx, 0, cardId);
+    else toCol.cardIds.push(cardId);
+  } else {
+    toCol.cardIds.push(cardId);
+  }
+
+  const movedColumn = c.columnId !== newColId;
   c.columnId = newColId;
   c.updated = now();
-  // Auto-archive isn't applied — done column just marks visually
-  logActivity(`Moved <b>${esc(c.title)}</b> from <em>${esc(from)}</em> to <em>${esc(to)}</em>`);
+  if (movedColumn) {
+    logActivity(`Moved <b>${esc(c.title)}</b> from <em>${esc(fromCol.name)}</em> to <em>${esc(toCol.name)}</em>`);
+  }
+  save();
+  renderBoard();
+}
+
+// Backward-compat alias used in a few places
+function moveCardToColumn(cardId, newColId) {
+  moveCard(cardId, newColId, null);
+}
+
+function moveColumn(colId, beforeColId) {
+  const board = activeBoard();
+  const ids = board.columnIds.filter(id => id !== colId);
+  if (beforeColId && beforeColId !== colId) {
+    const idx = ids.indexOf(beforeColId);
+    if (idx >= 0) ids.splice(idx, 0, colId);
+    else ids.push(colId);
+  } else {
+    ids.push(colId);
+  }
+  board.columnIds = ids;
   save();
   renderBoard();
 }
@@ -499,6 +704,11 @@ function addCard(colId) {
     checklist: [], linkedWikiId: null, archived: false,
     created: now(), updated: now()
   };
+  const col = state.columns[colId];
+  if (col) {
+    col.cardIds = col.cardIds || [];
+    col.cardIds.push(id);
+  }
   logActivity(`Added card in <em>${esc(state.columns[colId].name)}</em>`);
   save();
   renderBoard();
@@ -658,28 +868,80 @@ function openAssigneeFilter(anchor) {
   menu.className = "popup-menu";
   menu.style.top = (r.bottom + 4) + "px";
   menu.style.left = r.left + "px";
+  menu.style.minWidth = "240px";
   const board = activeBoard();
-  menu.innerHTML = `<button data-id="">${svgIcon("user",12)} All people</button>` +
-    state.people.map(p => `<button data-id="${p.id}"><span class="avatar" style="background:${p.color||pickAvatarColor(p.name)};width:14px;height:14px;font-size:8px;">${esc(p.initials||initials(p.name))}</span> ${esc(p.name)}</button>`).join("") +
-    `<div class="sep"></div><button data-id="__new">${svgIcon("plus",12)} New person…</button>`;
+  const renderRows = () => {
+    menu.innerHTML = `<button data-id="">${svgIcon("user",12)} All people</button>` +
+      state.people.map(p => `
+        <div class="person-row" data-id="${p.id}">
+          <button class="person-pick" data-id="${p.id}">
+            <span class="avatar" style="background:${p.color||pickAvatarColor(p.name)};width:14px;height:14px;font-size:8px;">${esc(p.initials||initials(p.name))}</span>
+            <span class="person-name">${esc(p.name)}</span>
+          </button>
+          <button class="person-edit" data-act="rename" data-id="${p.id}" title="Rename">${svgIcon("edit",11)}</button>
+          <button class="person-edit" data-act="del" data-id="${p.id}" title="Delete">${svgIcon("trash",11)}</button>
+        </div>
+      `).join("") +
+      `<div class="sep"></div><button data-id="__new">${svgIcon("plus",12)} New person…</button>`;
+    wire();
+  };
+  const wire = () => {
+    menu.querySelectorAll("button[data-id]").forEach(b => b.addEventListener("click", (ev) => {
+      const id = b.dataset.id;
+      if (id === "__new") {
+        const name = prompt("Person name");
+        if (name && name.trim()) {
+          const p = { id: uid("p"), name: name.trim(), initials: initials(name.trim()), color: pickAvatarColor(name.trim()) };
+          state.people.push(p);
+          logActivity(`Added person <em>${esc(p.name)}</em>`);
+          save();
+          board.filter.assignee = p.id;
+          close();
+          renderBoard();
+        }
+      } else if (b.classList.contains("person-pick") || (b.dataset.id === "" && b.parentElement === menu)) {
+        board.filter.assignee = id || null;
+        save();
+        close();
+        renderBoard();
+      }
+    }));
+    menu.querySelectorAll(".person-edit").forEach(b => b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const id = b.dataset.id;
+      const p = state.people.find(x => x.id === id);
+      if (!p) return;
+      if (b.dataset.act === "rename") {
+        const v = prompt("Rename person", p.name);
+        if (v && v.trim()) {
+          p.name = v.trim();
+          p.initials = initials(p.name);
+          logActivity(`Renamed person to <em>${esc(p.name)}</em>`);
+          save();
+          renderRows();
+          renderBoard(); // refresh chips/avatars elsewhere
+        }
+      } else if (b.dataset.act === "del") {
+        const refs = Object.values(state.cards).filter(c => c.assigneeId === id).length;
+        const msg = refs
+          ? `Delete "${p.name}"? They are assigned to ${refs} card${refs===1?"":"s"} — those cards will become unassigned.`
+          : `Delete "${p.name}"?`;
+        if (!confirm(msg)) return;
+        Object.values(state.cards).forEach(c => { if (c.assigneeId === id) c.assigneeId = null; });
+        state.boards.forEach(b => { if (b.filter && b.filter.assignee === id) b.filter.assignee = null; });
+        state.people = state.people.filter(x => x.id !== id);
+        logActivity(`Deleted person <em>${esc(p.name)}</em>`);
+        save();
+        renderRows();
+        renderBoard();
+      }
+    }));
+  };
   document.body.appendChild(menu);
+  renderRows();
   const close = () => { menu.remove(); document.removeEventListener("click", outside, true); };
   const outside = (e) => { if (!menu.contains(e.target)) close(); };
   setTimeout(() => document.addEventListener("click", outside, true), 0);
-  menu.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
-    const id = b.dataset.id;
-    if (id === "__new") {
-      const name = prompt("Person name");
-      if (name && name.trim()) {
-        const p = { id: uid("p"), name: name.trim(), initials: initials(name.trim()), color: pickAvatarColor(name.trim()) };
-        state.people.push(p);
-        board.filter.assignee = p.id;
-      }
-    } else {
-      board.filter.assignee = id || null;
-    }
-    save(); renderBoard(); close();
-  }));
 }
 
 function openTagFilter(anchor) {
@@ -861,6 +1123,9 @@ function openCardModal(cardId, focusTitle = false) {
   $("[data-act=delete]").addEventListener("click", () => {
     if (!confirm("Delete this card?")) return;
     logActivity(`Deleted <b>${esc(c.title)}</b>`);
+    // Remove from column's cardIds list
+    const col = state.columns[c.columnId];
+    if (col && col.cardIds) col.cardIds = col.cardIds.filter(id => id !== cardId);
     delete state.cards[cardId];
     save();
     close();
@@ -1244,7 +1509,7 @@ function renderWikiContent(pageId) {
       </div>
     </div>`;
   const previewMarkup = `
-    <div class="wiki-pane narrow">
+    <div class="wiki-pane fullwidth">
       <h1 style="margin-top:0;font-family:var(--font-head);font-size:28px;letter-spacing:-0.01em;">${esc(page.title)}</h1>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:18px;">
         ${(page.tags||[]).map(t => `<span class="tag" style="margin-right:4px;">${esc(t)}</span>`).join("") || `<span style="color:var(--text-subtle)">No tags · last edited ${relTime(page.updated)}</span>`}
@@ -2221,15 +2486,34 @@ function showShortcutsHelp() {
 }
 
 // ---------- Tweaks ----------
+const THEMES = [
+  { id: "crisp",     name: "Crisp",     swatches: ["#ffffff", "#4f46e5", "#0a0a0a"] },
+  { id: "notebook",  name: "Notebook",  swatches: ["#fbf8f1", "#b54a2d", "#2b2618"] },
+  { id: "terminal",  name: "Terminal",  swatches: ["#0d100e", "#3ddc84", "#c8e6c8"] },
+  { id: "midnight",  name: "Midnight",  swatches: ["#0d1326", "#6e8fff", "#d8e3ff"] },
+  { id: "solarized", name: "Solarized", swatches: ["#fdf6e3", "#268bd2", "#073642"] },
+  { id: "rose",      name: "Rose",      swatches: ["#fff7f9", "#be185d", "#41121e"] },
+  { id: "forest",    name: "Forest",    swatches: ["#fafcf7", "#2f7d32", "#1b2a17"] },
+];
+
 function bindTweaks() {
   const panel = document.getElementById("tweaks");
-  // Theme picks
-  panel.querySelectorAll(".tw-themes button").forEach(b => {
-    b.classList.toggle("active", b.dataset.theme === settings.theme);
+  // Build theme picker
+  const themeHost = panel.querySelector("#tw-themes");
+  themeHost.innerHTML = THEMES.map(t => `
+    <button data-theme="${t.id}" class="${settings.theme === t.id ? "active" : ""}">
+      <span class="swatch-set">
+        ${t.swatches.map(c => `<i style="background:${c}"></i>`).join("")}
+      </span>
+      <span>${esc(t.name)}</span>
+    </button>
+  `).join("");
+  themeHost.querySelectorAll("button").forEach(b => {
     b.addEventListener("click", () => {
       settings.theme = b.dataset.theme;
-      panel.querySelectorAll(".tw-themes button").forEach(x => x.classList.toggle("active", x.dataset.theme === settings.theme));
-      applyTheme(); saveSettings();
+      themeHost.querySelectorAll("button").forEach(x => x.classList.toggle("active", x.dataset.theme === settings.theme));
+      applyTheme();
+      saveSettings();
     });
   });
   // Mode toggle
@@ -2287,6 +2571,7 @@ function svgIcon(name, size = 14) {
     undo: `<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/>`,
     home: `<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2h-4v-7h-6v7H5a2 2 0 0 1-2-2z"/>`,
     sliders: `<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>`,
+    grip: `<g fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="15" cy="18" r="1.4"/></g>`,
     help: `<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-2.5 2-2.5 4"/><line x1="12" y1="17" x2="12.01" y2="17"/>`,
     board: `<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/>`,
     image: `<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>`,
@@ -2384,6 +2669,7 @@ function boot() {
   bindTweaks();
   setView(state.activeView || "board");
   renderTopbar();
+  renderStorageMeter();
   // Tick the topbar timestamp every minute
   setInterval(renderTopbar, 60000);
 }
