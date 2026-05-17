@@ -636,6 +636,10 @@ function renderCard(c) {
     }
     openCardModal(c.id);
   });
+  el.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    openCardContextMenu(e.clientX, e.clientY, c);
+  });
   el.addEventListener("dragstart", e => {
     e.dataTransfer.setData("text/cardid", c.id);
     e.dataTransfer.effectAllowed = "move";
@@ -643,6 +647,94 @@ function renderCard(c) {
   });
   el.addEventListener("dragend", () => el.classList.remove("dragging"));
   return el;
+}
+
+function openCardContextMenu(x, y, c) {
+  const menu = document.createElement("div");
+  menu.className = "popup-menu";
+  menu.style.top = y + "px";
+  menu.style.left = x + "px";
+
+  const board = activeBoard();
+  const moveOpts = board.columnIds
+    .filter(cid => cid !== c.columnId)
+    .map(cid => state.columns[cid])
+    .filter(Boolean);
+
+  menu.innerHTML = `
+    <button data-act="open">${svgIcon("edit",12)} Open card</button>
+    <button data-act="duplicate">${svgIcon("page",12)} Duplicate</button>
+    ${moveOpts.length ? `
+      <div class="popup-submenu">
+        <div class="submenu-label">Move to</div>
+        ${moveOpts.map(col => `
+          <button data-act="move" data-col-id="${col.id}">
+            <span class="swatch" style="background:${col.color};width:8px;height:8px;border-radius:50%;display:inline-block;flex-shrink:0;"></span>
+            ${esc(col.name)}
+          </button>
+        `).join("")}
+      </div>
+    ` : ""}
+    <div class="sep"></div>
+    <button data-act="archive">${c.archived ? svgIcon("undo",12)+" Unarchive" : svgIcon("archive",12)+" Archive"}</button>
+    <button data-act="delete" style="color:var(--danger)">${svgIcon("trash",12)} Delete</button>
+  `;
+  document.body.appendChild(menu);
+  // Keep menu in viewport
+  requestAnimationFrame(() => {
+    const r = menu.getBoundingClientRect();
+    if (r.right > window.innerWidth - 8) menu.style.left = (window.innerWidth - r.width - 8) + "px";
+    if (r.bottom > window.innerHeight - 8) menu.style.top = (window.innerHeight - r.height - 8) + "px";
+  });
+
+  const close = () => { menu.remove(); document.removeEventListener("click", outside, true); document.removeEventListener("contextmenu", outside, true); };
+  const outside = (e) => { if (!menu.contains(e.target)) close(); };
+  setTimeout(() => {
+    document.addEventListener("click", outside, true);
+    document.addEventListener("contextmenu", outside, true);
+  }, 0);
+
+  menu.querySelectorAll("button[data-act]").forEach(b => b.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const a = b.dataset.act;
+    if (a === "open") {
+      openCardModal(c.id);
+    } else if (a === "duplicate") {
+      const newId = uid("k");
+      const cp = {
+        ...c, id: newId,
+        title: c.title + " (copy)",
+        checklist: (c.checklist||[]).map(x => ({...x, id: uid("ch")})),
+        created: now(), updated: now(),
+        archived: false
+      };
+      state.cards[newId] = cp;
+      const col = state.columns[c.columnId];
+      if (col) {
+        col.cardIds = col.cardIds || [];
+        const idx = col.cardIds.indexOf(c.id);
+        if (idx >= 0) col.cardIds.splice(idx + 1, 0, newId);
+        else col.cardIds.push(newId);
+      }
+      logActivity(`Duplicated <b>${esc(c.title)}</b>`);
+      save(); renderBoard();
+    } else if (a === "move") {
+      moveCard(c.id, b.dataset.colId, null);
+    } else if (a === "archive") {
+      c.archived = !c.archived;
+      c.updated = now();
+      logActivity(`${c.archived ? "Archived" : "Unarchived"} <b>${esc(c.title)}</b>`);
+      save(); renderBoard();
+    } else if (a === "delete") {
+      if (!confirm(`Delete "${c.title}"?`)) return;
+      logActivity(`Deleted <b>${esc(c.title)}</b>`);
+      const col = state.columns[c.columnId];
+      if (col && col.cardIds) col.cardIds = col.cardIds.filter(id => id !== c.id);
+      delete state.cards[c.id];
+      save(); renderBoard();
+    }
+    close();
+  }));
 }
 
 function moveCard(cardId, newColId, beforeCardId) {
@@ -950,20 +1042,91 @@ function openTagFilter(anchor) {
   menu.className = "popup-menu";
   menu.style.top = (r.bottom + 4) + "px";
   menu.style.left = r.left + "px";
-  const board = activeBoard();
-  // collect all tags across cards + state.tags
-  const all = new Set(state.tags || []);
-  Object.values(state.cards).forEach(c => (c.tags||[]).forEach(t => all.add(t)));
-  menu.innerHTML = `<button data-tag="">${svgIcon("tag",12)} All tags</button>` +
-    [...all].sort().map(t => `<button data-tag="${esc(t)}">${svgIcon("tag",12)} ${esc(t)}</button>`).join("");
+  menu.style.minWidth = "220px";
   document.body.appendChild(menu);
+  const board = activeBoard();
+
+  const renderRows = () => {
+    const all = new Set(state.tags || []);
+    Object.values(state.cards).forEach(c => (c.tags||[]).forEach(t => all.add(t)));
+    const sorted = [...all].sort();
+    menu.innerHTML = `
+      <button data-tag="">${svgIcon("tag",12)} All tags</button>
+      ${sorted.map(t => {
+        const refs = Object.values(state.cards).filter(c => (c.tags||[]).includes(t)).length;
+        return `
+          <div class="tag-row" data-tag="${esc(t)}">
+            <button class="tag-pick" data-tag="${esc(t)}">
+              ${svgIcon("tag",12)}
+              <span class="tag-name">${esc(t)}</span>
+              <span class="tag-count">${refs}</span>
+            </button>
+            <button class="tag-edit" data-act="del" data-tag="${esc(t)}" title="Delete tag">${svgIcon("trash",11)}</button>
+          </div>
+        `;
+      }).join("")}
+      <div class="sep"></div>
+      <form class="tag-new-form" onsubmit="return false;">
+        <input type="text" placeholder="New tag…" maxlength="40">
+        <button type="submit" class="primary" style="padding:4px 8px;font-size:11px;">Add</button>
+      </form>
+    `;
+    wire();
+  };
+
+  const wire = () => {
+    menu.querySelectorAll("button[data-tag]").forEach(b => b.addEventListener("click", (ev) => {
+      if (b.classList.contains("tag-edit")) return; // handled below
+      ev.stopPropagation();
+      board.filter.tag = b.dataset.tag || null;
+      save(); close(); renderBoard();
+    }));
+    menu.querySelectorAll(".tag-edit[data-act=del]").forEach(b => b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const t = b.dataset.tag;
+      const refs = Object.values(state.cards).filter(c => (c.tags||[]).includes(t)).length;
+      const msg = refs
+        ? `Delete tag "${t}"?\n\nIt will be removed from ${refs} card${refs===1?"":"s"}.`
+        : `Delete tag "${t}"?`;
+      if (!confirm(msg)) return;
+      // remove from card lists
+      Object.values(state.cards).forEach(c => {
+        if (c.tags) c.tags = c.tags.filter(x => x !== t);
+      });
+      state.tags = (state.tags || []).filter(x => x !== t);
+      state.boards.forEach(bd => { if (bd.filter && bd.filter.tag === t) bd.filter.tag = null; });
+      logActivity(`Deleted tag <em>${esc(t)}</em>`);
+      save();
+      renderRows();
+      renderBoard();
+    }));
+    const form = menu.querySelector(".tag-new-form");
+    if (form) {
+      const inp = form.querySelector("input");
+      form.querySelector("button").addEventListener("click", () => addFromInput());
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); addFromInput(); }
+      });
+      function addFromInput() {
+        const v = inp.value.trim();
+        if (!v) return;
+        if (!(state.tags || []).includes(v)) {
+          state.tags = state.tags || [];
+          state.tags.push(v);
+          logActivity(`Added tag <em>${esc(v)}</em>`);
+          save();
+        }
+        inp.value = "";
+        renderRows();
+        inp.focus();
+      }
+    }
+  };
+
   const close = () => { menu.remove(); document.removeEventListener("click", outside, true); };
   const outside = (e) => { if (!menu.contains(e.target)) close(); };
   setTimeout(() => document.addEventListener("click", outside, true), 0);
-  menu.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
-    board.filter.tag = b.dataset.tag || null;
-    save(); renderBoard(); close();
-  }));
+  renderRows();
 }
 
 // ---------- Card Modal ----------
