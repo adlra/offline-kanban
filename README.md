@@ -30,7 +30,7 @@ I wanted an offline task tracker with other features like a wiki and a Gantt Cha
 4. Click **Export** before closing the tab to save a JSON backup.
 5. Click **Import** and select that JSON file to pick up where you left off.
 
-> **Warning:** all data lives in your browser's `localStorage`. Clearing site data, switching browsers, or using a private window will wipe the board. **Export daily.**.
+> **Warning:** all data lives in your browser's `localStorage`. Clearing site data, switching browsers, or using a private window will wipe the board. **Export daily.** The top bar has a live storage meter so you can keep an eye on how full things are getting.
 
 ---
 
@@ -39,8 +39,10 @@ I wanted an offline task tracker with other features like a wiki and a Gantt Cha
 ### Board view
 - Multiple boards, each with custom columns (name + color).
 - Cards with title, Markdown description, assignee, due date, priority, tags, checklists, and an optional linked wiki page.
-- Drag-and-drop cards between columns; drag columns to reorder.
-- Filter the active board by assignee or tag.
+- Drag cards between columns and reorder them within a column. Card order is remembered.
+- Drag columns by their grip handle to reorder them.
+- Right-click any card for quick **Archive** / **Delete** actions.
+- Filter the active board by assignee or tag. The **All Tags** pill has a submenu for adding or removing tags in bulk.
 - Mark one or more columns as "Done" so completed work is styled accordingly.
 
 ### Wiki view
@@ -67,7 +69,10 @@ A running, local log of changes.
 - Optional pre-close warning if you haven't exported today.
 
 ### Themes
-There are a couple of visual themes so you can pick what you like.
+Seven visual themes (**Crisp**, **Notebook**, **Terminal**, **Midnight**, **Solarized**, **Rose**, **Forest**), each with a light and dark variant. Toggle from the *Tweaks* panel or with the moon icon in the top bar.
+
+### Storage meter
+A small bar in the top bar shows how much of your browser's `localStorage` quota the app is using. It turns amber at 60% and red at 85% so you have time to clean up or export before things get tight.
 
 ---
 
@@ -121,7 +126,7 @@ Exported JSON is the full `state` object. Top-level fields:
   "people":  [ { "id", "name", "initials", "color" } ],
   "tags":    [ "design", "engineering", … ],
   "boards":  [ { "id", "name", "columnIds", "doneColumnIds", "filter", "created" } ],
-  "columns": { "<id>": { "id", "name", "color" } },
+  "columns": { "<id>": { "id", "name", "color", "cardIds" } },
   "cards":   { "<id>": { "id", "columnId", "title", "description",
                           "assigneeId", "due", "priority", "tags",
                           "checklist", "linkedWikiId", "archived",
@@ -140,7 +145,7 @@ Because the format is plain JSON, exports can be diffed in git, hand-edited, or 
 ## Limitations and trade-offs
 
 - **No sync.** The export file *is* the sync mechanism.
-- **Storage quota.** Browsers typically give `localStorage` ~5 MB per origin. Large images pasted into wiki pages will blow that out.
+- **Storage quota.** Browsers typically give `localStorage` around 5 MB per origin. Large images pasted into wiki pages will fill that up fast. Watch the storage meter in the top bar.
 - **No undo history.** Deletes prompt for confirmation; once gone, they're gone (until you re-import a backup).
 - **Single-user.** There's no concept of accounts or permissions.
 
