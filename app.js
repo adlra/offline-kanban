@@ -1034,6 +1034,16 @@ function openAssigneeFilter(anchor) {
   const close = () => { menu.remove(); document.removeEventListener("click", outside, true); };
   const outside = (e) => { if (!menu.contains(e.target)) close(); };
   setTimeout(() => document.addEventListener("click", outside, true), 0);
+  // Keep within viewport
+  requestAnimationFrame(() => {
+    const rr = menu.getBoundingClientRect();
+    if (rr.right > window.innerWidth - 8) {
+      menu.style.left = (window.innerWidth - rr.width - 8) + "px";
+    }
+    if (rr.bottom > window.innerHeight - 8) {
+      menu.style.top = (window.innerHeight - rr.height - 8) + "px";
+    }
+  });
 }
 
 function openTagFilter(anchor) {
@@ -1066,10 +1076,7 @@ function openTagFilter(anchor) {
         `;
       }).join("")}
       <div class="sep"></div>
-      <form class="tag-new-form" onsubmit="return false;">
-        <input type="text" placeholder="New tag…" maxlength="40">
-        <button type="submit" class="primary" style="padding:4px 8px;font-size:11px;">Add</button>
-      </form>
+      <button data-act="new-tag">${svgIcon("plus",12)} New tag…</button>
     `;
     wire();
   };
@@ -1100,33 +1107,36 @@ function openTagFilter(anchor) {
       renderRows();
       renderBoard();
     }));
-    const form = menu.querySelector(".tag-new-form");
-    if (form) {
-      const inp = form.querySelector("input");
-      form.querySelector("button").addEventListener("click", () => addFromInput());
-      inp.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") { e.preventDefault(); addFromInput(); }
-      });
-      function addFromInput() {
-        const v = inp.value.trim();
-        if (!v) return;
-        if (!(state.tags || []).includes(v)) {
-          state.tags = state.tags || [];
-          state.tags.push(v);
-          logActivity(`Added tag <em>${esc(v)}</em>`);
-          save();
-        }
-        inp.value = "";
-        renderRows();
-        inp.focus();
+    const newBtn = menu.querySelector('button[data-act="new-tag"]');
+    if (newBtn) newBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const v = prompt("New tag name");
+      if (!v || !v.trim()) return;
+      const tag = v.trim();
+      if (!(state.tags || []).includes(tag)) {
+        state.tags = state.tags || [];
+        state.tags.push(tag);
+        logActivity(`Added tag <em>${esc(tag)}</em>`);
+        save();
       }
-    }
+      renderRows();
+    });
   };
 
   const close = () => { menu.remove(); document.removeEventListener("click", outside, true); };
   const outside = (e) => { if (!menu.contains(e.target)) close(); };
   setTimeout(() => document.addEventListener("click", outside, true), 0);
   renderRows();
+  // Keep within viewport
+  requestAnimationFrame(() => {
+    const rr = menu.getBoundingClientRect();
+    if (rr.right > window.innerWidth - 8) {
+      menu.style.left = (window.innerWidth - rr.width - 8) + "px";
+    }
+    if (rr.bottom > window.innerHeight - 8) {
+      menu.style.top = (window.innerHeight - rr.height - 8) + "px";
+    }
+  });
 }
 
 // ---------- Card Modal ----------
@@ -2431,6 +2441,21 @@ function openPeriodDialog(period) {
 // ---------- Activity view ----------
 function renderActivity() {
   const host = document.getElementById("activity-list");
+  const countEl = document.getElementById("activity-count");
+  const clearBtn = document.getElementById("activity-clear");
+  if (countEl) countEl.textContent = `${state.activity.length} entr${state.activity.length === 1 ? "y" : "ies"}`;
+  if (clearBtn) {
+    clearBtn.disabled = !state.activity.length;
+    clearBtn.style.opacity = state.activity.length ? "1" : "0.5";
+    clearBtn.onclick = () => {
+      if (!state.activity.length) return;
+      if (!confirm(`Clear all ${state.activity.length} activity entries?\n\nThis cannot be undone.`)) return;
+      state.activity = [];
+      save();
+      renderActivity();
+      toast("Activity cleared ✓", "ok");
+    };
+  }
   if (!state.activity.length) {
     host.innerHTML = `<div style="color:var(--text-muted)">No activity yet.</div>`;
     return;

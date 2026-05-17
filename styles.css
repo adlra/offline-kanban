@@ -1554,6 +1554,27 @@ main { overflow: hidden; position: relative; }
    ACTIVITY VIEW
    ============================================================ */
 #view-activity { padding: 32px 48px; overflow-y: auto; height: 100%; }
+.activity-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 20px;
+  max-width: 720px;
+}
+.activity-head h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.activity-head .count {
+  font-size: 11px;
+  color: var(--text-subtle);
+  padding: 2px 8px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
 #view-activity h2 { margin: 0 0 20px; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
 .activity-list { max-width: 720px; }
 .activity-item {

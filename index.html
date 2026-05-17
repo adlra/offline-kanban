@@ -159,7 +159,15 @@
 
     <!-- ============== ACTIVITY VIEW ============== -->
     <section class="view" id="view-activity">
-      <h2>Activity</h2>
+      <div class="activity-head">
+        <h2>Activity</h2>
+        <span class="count" id="activity-count">0 entries</span>
+        <div style="flex:1"></div>
+        <button class="ghost" id="activity-clear" title="Permanently remove all activity entries">
+          <svg width="12" height="12" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          Clear activity
+        </button>
+      </div>
       <div class="activity-list" id="activity-list"></div>
     </section>
   </main>
