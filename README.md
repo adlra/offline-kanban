@@ -67,7 +67,7 @@ A running, local log of changes.
 - Optional pre-close warning if you haven't exported today.
 
 ### Themes
-Three visual themes (**Crisp**, **Notebook**, **Terminal**), each with a light and dark variant. Toggle from the *Tweaks* panel or with the moon icon in the top bar.
+There are a couple of visual themes so you can pick what you like.
 
 ---
 
